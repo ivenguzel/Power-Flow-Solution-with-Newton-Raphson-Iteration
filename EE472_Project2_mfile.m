@@ -2,7 +2,7 @@
 %% PROJECT1 
 %READING DATA FROM THE TEXT FILE
 clear all;
-path_ieee_cdf = 'C:\Users\Iven\Documents\git\Power-Flow-Solution-with-Newton-Raphson-Iteration\Test Cases for Ybus\test6.dat';
+path_ieee_cdf = 'C:\Users\Iven\Documents\git\Power-Flow-Solution-with-Newton-Raphson-Iteration\Test Cases for Ybus\test7.dat';
 
 fileID = fopen(path_ieee_cdf); %opens the file for binary read access by giving file identifier
 tline = fgetl(fileID); %returns the next line of fileID (removes nexline char)
