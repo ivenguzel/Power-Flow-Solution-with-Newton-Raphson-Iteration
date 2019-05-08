@@ -1,7 +1,7 @@
 
 %READING DATA FROM THE TEXT FILE
 clear all;
-path_ieee_cdf = 'ieee_cdf.dat';
+path_ieee_cdf = '14_ieee.dat';
 
 fileID = fopen(path_ieee_cdf); %opens the file for binary read access by giving file identifier
 tline = fgetl(fileID); %returns the next line of fileID (removes nexline char)
@@ -14,12 +14,12 @@ end   %cdf file is written and ready to be worked on
 fclose(fileID);
 
 %% CREATE Ybus
-[Nbus,PQ,PV,BusIndex,G,B,Slack,S,Qmin,Qmax,VSlack] = createYbus(file) ;
+[Nbus,PQ,PV,BusIndex,G,B,Slack,S,Qmin,Qmax,VSlack,Nbus_first,V_real,Theta_real,Theta_Slack] = createYbus(file) ;
 
 %% RUN NEWTON RAPHSON ITERATIONS (without Q limits of the generators)
-
-[V,theta,Q] = NewtonRap(Nbus,PQ,PV,BusIndex,G,B,Slack,S,VSlack) ; 
-
+tic; 
+[V,theta,Q,tol_vec] = NewtonRap(Nbus,PQ,PV,BusIndex,G,B,Slack,S,VSlack,Theta_Slack) ; 
+Tdiv =toc;
 %% CHECK Q LIMITS 
 
 i = 1 ; 
@@ -29,10 +29,11 @@ i = 1 ;
  ind=find(BusIndex == PV(i,1));    
  if Qmin(ind,1)>Q(ind,1) ||  Q(ind,1)>Qmax(ind,1) 
 
-file(ind+2,(25:26)) = num2str(0) ; 
-[Nbus,PQ,PV,BusIndex,G,B,Slack,S,Qmin,Qmax,VSlack] = createYbus(file) ; 
-[V,theta,Q] = NewtonRap(Nbus,PQ,PV,BusIndex,G,B,Slack,S,VSlack) ; 
- 
+file(ind+Nbus_first-1,(26)) = num2str(0) ; 
+[Nbus,PQ,PV,BusIndex,G,B,Slack,S,Qmin,Qmax,VSlack,Nbus_first,V_real,Theta_real,Theta_Slack] = createYbus(file) ; 
+[V,theta,Q] = NewtonRap(Nbus,PQ,PV,BusIndex,G,B,Slack,S,VSlack,Theta_Slack) ; 
+file(ind+Nbus_first-1,(26)) = num2str(2) ;
+
  end
  i = i+1 ; 
  
@@ -44,9 +45,7 @@ end
 
 theta = radtodeg(theta);
 
-
-
-function [Nbus,PQ,PV,BusIndex,G,B,Slack,S,Qmin,Qmax,VSlack]= createYbus(file)
+function [Nbus,PQ,PV,BusIndex,G,B,Slack,S,Qmin,Qmax,VSlack,Nbus_first,V_real,Theta_real,Theta_Slack]= createYbus(file)
 
 %This local function takes cdf file as input and creates Ybus
 
@@ -99,7 +98,6 @@ countpq = 1 ;
 countpv = 1 ; 
 PQ = [] ; 
 PV= [] ; 
-Slack = zeros(1,1) ; 
 Qmin = zeros(Nbus,1);
 Qmax = zeros(Nbus,1);
 
@@ -110,6 +108,8 @@ for m=1:Nbus
     Qmin(m,1) = str2double(file(Nbus_first + (m-1) ,(99:105)));
     Qmax(m,1) = str2double(file(Nbus_first + (m-1) ,(91:97)));
     P_cdf(m,1) = str2double(file(Nbus_first + (m-1),(60:66))) - str2double(file(Nbus_first + (m-1),(41:48))) ;
+    V_real(m,1) = str2double(file(Nbus_first + (m-1) ,(28:33)));
+    Theta_real(m,1) = str2double(file(Nbus_first + (m-1) ,(34:40)));
     
     if (str2double(file(Nbus_first + (m-1),(25:26))) == 0 || (str2double(file(Nbus_first + (m-1),(25:26))) == 1)) %Type PQ buses 
         PQ(countpq,1) = str2double(file(Nbus_first + (m-1),(1:4))) ;  %bus name
@@ -128,6 +128,7 @@ for m=1:Nbus
     if (str2double(file(Nbus_first + (m-1),(25:26)))) == 3  %Type Slack
         Slack(1,1) = str2double(file(Nbus_first + (m-1),(1:4))) ; %bus name
         VSlack = str2double(file(Nbus_first + (m-1),(28:32))) ;  %theta slack is assumed to be zero
+        Theta_Slack = str2double(file(Nbus_first + (m-1),(34:40))) ;
     end
     
     BusIndex(m,1) =str2double(file(Nbus_first+ (m-1) ,(1:4))) ; %Bus names might be different than our index, so store these for branch relations
@@ -168,7 +169,7 @@ end
 
 G = real(Ybus) ; %These values were in Pu 
 B = imag(Ybus) ; 
-
+Slack = find (Slack == BusIndex) ; 
 S = [P_cdf([1:Slack-1,Slack+1:end]);PQ(:,3)] ; % [Injected power of all buses except slack's , Injected react power of Q buses] ==> True values 
 S = S / BMva ; % Find pu values
 
@@ -178,11 +179,13 @@ Qmax = Qmax / BMva ;
 end
 
 
-function [V,theta,Q] = NewtonRap(Nbus,PQ,PV,BusIndex,G,B,Slack,S,VSlack) 
+function [V,theta,Q,tol_vec] = NewtonRap(Nbus,PQ,PV,BusIndex,G,B,Slack,S,VSlack,Theta_Slack) 
 
 theta = zeros(Nbus,1) ;    % flat start
+theta(Slack) = degtorad(Theta_Slack);
 V = ones(Nbus,1) ;  % flat start
 V(Slack) = VSlack ; 
+
 
 for i=1:length(PV)
  ind=find(BusIndex == PV(i,1)); % PV(:,1) stores bus names , bus index might be different than bus name
@@ -192,6 +195,7 @@ end
 
 tol = 100 ;   % We will check if the tolerance converges
 
+it_number = 0;
 while(tol>0.00001)   %SET THE ACCEPTABLE ERROR in the APPROXIMATION HERE !!
     
 %% POWER BALANCE EQUATIONS 
@@ -241,7 +245,7 @@ J_11=zeros(Nbus,Nbus); %J11 =delP/del(theta)
     for r=1:Nbus
         m=r;
         for j=1:length(PQ)
-            n=PQ(j,1);
+            n=find(PQ(j,1)==BusIndex);
             if m==n
                 for n=1:Nbus
                     J_12(r,j)=J_12(r,j)+V(n)*(G(m,n)*cos(theta(m)-theta(n))+B(m,n)*sin(theta(m)-theta(n)));
@@ -255,7 +259,7 @@ J_11=zeros(Nbus,Nbus); %J11 =delP/del(theta)
 	%% Formation Of J_21
     J_21=zeros(length(PQ),Nbus);
     for r=1:length(PQ)
-        m=PQ(r,1);
+        m=find(PQ(r,1)==BusIndex);
         for j=1:Nbus
             n=j;
             if m==n
@@ -271,9 +275,9 @@ J_11=zeros(Nbus,Nbus); %J11 =delP/del(theta)
 	%% Formation Of J_22
     J_22=zeros(length(PQ),length(PQ));
     for r=1:length(PQ)
-        m=PQ(r,1);
+        m=find(PQ(r,1)==BusIndex);
         for j=1:length(PQ)
-            n=PQ(j,1);
+            n=find(PQ(j,1)==BusIndex);
             if m==n
                 for n=1:Nbus
                 J_22(r,j)=J_22(r,j)+V(n)*(G(m,n)*sin(theta(m)-theta(n))-B(m,n)*cos(theta(m)-theta(n)));
@@ -301,7 +305,7 @@ J=[J_11 J_12 ; J_21 J_22]; % Jacobian Matrix
    
 Fx = S_est - S ;  
 
-% X=inv(J)*Fx;
+%X=inv(J)*Fx;
 
 X = J\Fx    ; 
     
@@ -313,6 +317,8 @@ for i=1:length(PQ)  %Update unknown voltage values which are the voltage values 
 end     
 
 tol = norm(X) ; % Check the total error in Delta(X)
+it_number = it_number +1;
+tol_vec(it_number,1) = tol;
 end
 
 %%FINAL P&Q VALUES
